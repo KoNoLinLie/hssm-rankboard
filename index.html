@@ -6,30 +6,35 @@
 </div>
 
 <script>
-  // ===== 配置：改成你的 Worker URL =====
+  // ===== 配置：改成你的 Cloudflare Worker URL =====
   const PROXY_URL = 'https://rank-proxy.2302724260.workers.dev';
 
   const container = document.getElementById('rankContainer');
   const frame     = document.getElementById('rankFrame');
-  let   loaded    = false;
+  let   rendered  = false;
+  let   fallbackTimer = null;
 
-  // 1) iframe 高度同步
+  // 1) 监听 iframe 发来的 setHeight 消息——这是 React 成功挂载的信号
   window.addEventListener('message', function (event) {
     if (event.data && event.data.type === 'setHeight') {
+      rendered = true;
+      clearTimeout(fallbackTimer);
       frame.style.height = event.data.height + 'px';
     }
   });
 
-  if (frame) frame.addEventListener('load', function () { loaded = true; });
-
-  // 2) 5 秒内没加载成功，触发降级
-  setTimeout(function () {
-    if (!loaded) fallback();
-  }, 5000);
+  // 2) 3 秒内没收到 setHeight 消息 → 判定 iframe 渲染失败 → 降级
+  //    （正常情况下 React 挂载 + 首次高度上报 < 1 秒）
+  fallbackTimer = setTimeout(fallback, 3000);
 
   // 3) 降级：通过 Worker 代理调飞书 API，原生 HTML 渲染
   function fallback() {
-    container.innerHTML = '<div style="padding:24px;text-align:center;color:#888">排行榜加载中…</div>';
+    if (rendered) return; // 保险：已经成功渲染就不降级
+
+    // 先隐藏 iframe，避免用户看到错误页
+    if (frame) frame.style.display = 'none';
+
+    container.innerHTML = '<div style="padding:40px;text-align:center;color:#888;">排行榜加载中…</div>';
 
     fetch(PROXY_URL)
       .then(function (r) {
@@ -38,43 +43,61 @@
       })
       .then(renderRank)
       .catch(function (e) {
-        container.innerHTML = '<div style="padding:24px;text-align:center;color:#c33">排行榜加载失败：' + e.message + '</div>';
+        container.innerHTML =
+          '<div style="padding:40px;text-align:center;color:#c33;">' +
+            '排行榜加载失败：' + e.message +
+          '</div>';
       });
   }
 
   function renderRank(data) {
     var items = (data && data.items) || [];
     if (!items.length) {
-      container.innerHTML = '<div style="padding:24px;text-align:center;color:#999">暂无排行数据</div>';
+      container.innerHTML = '<div style="padding:40px;text-align:center;color:#999;">暂无排行数据</div>';
       return;
     }
 
+    // 按总分降序、DX 降序排序
+    items.sort(function (a, b) {
+      if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+      return b.totalDx - a.totalDx;
+    });
+
     var rows = items.map(function (it, i) {
+      var rankClass = '';
+      var rankStyle = 'padding:14px 10px;font-weight:700;color:#888;';
+      if (i === 0) rankStyle += 'color:#f5a623;';
+      else if (i === 1) rankStyle += 'color:#9b9b9b;';
+      else if (i === 2) rankStyle += 'color:#cd7f32;';
+
       return ''
         + '<tr style="border-bottom:1px solid #eee;">'
-        +   '<td style="padding:14px 10px;font-weight:700;color:#888;">' + (i + 1) + '</td>'
-        +   '<td style="padding:14px 10px;">' + (it.playerName || '-') + '</td>'
+        +   '<td style="' + rankStyle + '">' + (i + 1) + '</td>'
+        +   '<td style="padding:14px 10px;font-weight:500;">' + (it.playerName || '-') + '</td>'
         +   '<td style="padding:14px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + it.totalScore.toFixed(4) + '</td>'
         +   '<td style="padding:14px 10px;text-align:right;color:#666;font-variant-numeric:tabular-nums;">' + it.totalDx + '</td>'
         + '</tr>';
     }).join('');
 
     container.innerHTML = ''
-      + '<div style="font-family:\'Noto Sans SC\',\'Microsoft YaHei\',sans-serif;padding:24px;max-width:720px;margin:0 auto;">'
-      +   '<h2 style="font-size:22px;font-weight:700;margin:0 0 16px;">"海师山盟"预选排行榜</h2>'
+      + '<div style="font-family:\'Noto Sans SC\',\'Microsoft YaHei\',sans-serif;padding:20px 16px;max-width:720px;margin:0 auto;">'
+      +   '<div style="margin-bottom:16px;">'
+      +     '<div style="font-size:11px;letter-spacing:2px;font-weight:700;color:#bbb;margin-bottom:6px;">LIVE RANKING</div>'
+      +     '<h1 style="font-size:24px;font-weight:700;margin:0;">"海师山盟"预选排行榜</h1>'
+      +   '</div>'
       +   '<table style="width:100%;border-collapse:collapse;background:#fff;">'
       +     '<thead>'
-      +       '<tr style="background:#f5f5f5;font-size:13px;color:#666;">'
-      +         '<th style="padding:10px;text-align:left;">#</th>'
-      +         '<th style="padding:10px;text-align:left;">选手</th>'
-      +         '<th style="padding:10px;text-align:right;">总分</th>'
-      +         '<th style="padding:10px;text-align:right;">总 DX</th>'
+      +       '<tr style="background:#f7f7f7;font-size:12px;color:#888;">'
+      +         '<th style="padding:10px;text-align:left;font-weight:600;">#</th>'
+      +         '<th style="padding:10px;text-align:left;font-weight:600;">选手</th>'
+      +         '<th style="padding:10px;text-align:right;font-weight:600;">总分</th>'
+      +         '<th style="padding:10px;text-align:right;font-weight:600;">总 DX</th>'
       +       '</tr>'
       +     '</thead>'
       +     '<tbody>' + rows + '</tbody>'
       +   '</table>'
       +   '<div style="margin-top:12px;font-size:12px;color:#aaa;text-align:right;">'
-      +     '数据更新于 ' + (data.updatedAt ? new Date(data.updatedAt).toLocaleString('zh-CN') : '-')
+      +     '共 ' + items.length + ' 位选手 · 更新于 ' + (data.updatedAt ? new Date(data.updatedAt).toLocaleString('zh-CN') : '-')
       +   '</div>'
       + '</div>';
   }
