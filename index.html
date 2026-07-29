@@ -1,12 +1,72 @@
-<iframe id="rankFrame"
-        src="https://dcnuvkn7y31w.aiforce.cloud/app/app_17b0wgd2xcj"
-        scrolling="no"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-        style="width: 100%; border: 0; display: block;"></iframe>
+<div id="rankContainer">
+  <iframe id="rankFrame"
+          src="https://dcnuvkn7y31w.aiforce.cloud/app/app_17b0wgd2xcj"
+          scrolling="no"
+          style="width: 100%; border: 0; display: block;"></iframe>
+</div>
+
 <script>
+  // 1) iframe 高度同步
   window.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'setHeight') {
-      document.getElementById('rankFrame').style.height = event.data.height + 'px';
+      const frame = document.getElementById('rankFrame');
+      if (frame) frame.style.height = event.data.height + 'px';
     }
   });
+
+  // 2) 检测 iframe 是否加载成功；失败则降级为原生渲染
+  (function () {
+    const container = document.getElementById('rankContainer');
+    const iframeSrc = 'https://dcnuvkn7y31w.aiforce.cloud/app/app_17b0wgd2xcj';
+    const apiSrc    = 'https://dcnuvkn7y31w.aiforce.cloud/app/app_17b0wgd2xcj/openapi/feishu/rank';
+
+    let loaded = false;
+    const frame = document.getElementById('rankFrame');
+    if (frame) frame.addEventListener('load', () => { loaded = true; });
+
+    // 5 秒内没 load 事件，或 load 后 3 秒还没收到 setHeight，都视为失败
+    setTimeout(() => {
+      if (loaded) return;
+      fallback();
+    }, 5000);
+
+    function fallback() {
+      fetch(apiSrc).then(r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(renderNative).catch(() => {
+        container.innerHTML = '<div style="padding:24px;text-align:center;color:#999">排行榜加载失败，请稍后刷新</div>';
+      });
+    }
+
+    function renderNative(data) {
+      const items = (data && data.items) || [];
+      if (!items.length) { container.innerHTML = '<div style="padding:24px;text-align:center">暂无排行数据</div>'; return; }
+      const rows = items.map((it, i) => `
+        <tr style="border-bottom:1px solid #eee;">
+          <td style="padding:12px 8px;font-weight:bold;color:#888;">${i + 1}</td>
+          <td style="padding:12px 8px;">${it.playerName || ''}</td>
+          <td style="padding:12px 8px;text-align:right;">${it.totalScore ?? '-'}</td>
+          <td style="padding:12px 8px;text-align:right;color:#666;">${it.totalDx ?? '-'}</td>
+        </tr>`).join('');
+      container.innerHTML = `
+        <div style="font-family:'Noto Sans SC','Microsoft YaHei',sans-serif;padding:24px;max-width:720px;margin:0 auto;">
+          <h2 style="font-size:22px;font-weight:700;margin:0 0 16px;">"海师山盟"预选排行榜</h2>
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr style="background:#f5f5f5;font-size:13px;color:#666;">
+                <th style="padding:10px 8px;text-align:left;">#</th>
+                <th style="padding:10px 8px;text-align:left;">选手</th>
+                <th style="padding:10px 8px;text-align:right;">总分</th>
+                <th style="padding:10px 8px;text-align:right;">总 DX</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div style="margin-top:12px;font-size:12px;color:#aaa;text-align:right;">
+            数据更新于 ${data.updatedAt ? new Date(data.updatedAt).toLocaleString() : '-'}
+          </div>
+        </div>`;
+    }
+  })();
 </script>
