@@ -1,21 +1,23 @@
-<div id="rankContainer" style="width:100%;"></div>
+<!-- 两个独立容器：iframe 容器 + 降级容器，物理隔离 -->
+<div id="iframeWrapper" style="width:100%;">
+  <iframe id="rankFrame"
+          src="https://dcnuvkn7y31w.aiforce.cloud/app/app_17b0wgd2xcj"
+          scrolling="no"
+          style="width:100%;border:0;display:block;min-height:600px;"></iframe>
+</div>
+<div id="fallbackBox" style="display:none;width:100%;"></div>
 
 <script>
-  // ===== 改成你的 Cloudflare Worker URL =====
+  // ===== 配置 =====
   const PROXY_URL = 'https://rank-proxy.2302724260.workers.dev';
-  const IFRAME_URL = 'https://dcnuvkn7y31w.aiforce.cloud/app/app_17b0wgd2xcj';
 
-  const container = document.getElementById('rankContainer');
-  let   rendered  = false;
+  const iframeWrapper = document.getElementById('iframeWrapper');
+  const fallbackBox   = document.getElementById('fallbackBox');
+  const frame         = document.getElementById('rankFrame');
+  let   rendered      = false;
+  let   fallbackDone  = false;
 
-  // 1) 先创建 iframe
-  const frame = document.createElement('iframe');
-  frame.src = IFRAME_URL;
-  frame.scrolling = 'no';
-  frame.style.cssText = 'width:100%;border:0;display:block;min-height:600px;';
-  container.appendChild(frame);
-
-  // 2) 监听 React 成功挂载的信号
+  // 1) 成功信号：React 挂载后会发 setHeight
   window.addEventListener('message', function (event) {
     if (event.data && event.data.type === 'setHeight') {
       rendered = true;
@@ -24,22 +26,23 @@
     }
   });
 
-  // 3) 3 秒内没收到成功信号 → 彻底移除 iframe → 降级
-  const fallbackTimer = setTimeout(function () {
-    if (rendered) return;
+  // 2) 3 秒内没收到成功信号 → 启动降级
+  const fallbackTimer = setTimeout(triggerFallback, 3000);
 
-    // 关键：彻底从 DOM 移除 iframe，不留任何引用
-    if (frame.parentNode) frame.parentNode.removeChild(frame);
-    // 清空容器
-    container.innerHTML = '';
+  function triggerFallback() {
+    if (rendered || fallbackDone) return;
+    fallbackDone = true;
 
-    fetchRankData();
-  }, 3000);
+    // 关键：彻底销毁 iframe wrapper，杜绝 Safari 下 iframe 内部状态反扑
+    if (iframeWrapper && iframeWrapper.parentNode) {
+      iframeWrapper.parentNode.removeChild(iframeWrapper);
+    }
 
-  // 4) 通过 Worker 代理调飞书 API
-  function fetchRankData() {
-    container.innerHTML = '<div style="padding:40px;text-align:center;color:#888;">排行榜加载中…</div>';
+    // 切到降级容器
+    fallbackBox.style.display = 'block';
+    fallbackBox.innerHTML = '<div style="padding:40px;text-align:center;color:#888;">排行榜加载中…</div>';
 
+    // 调 Worker 代理
     fetch(PROXY_URL, { method: 'GET', cache: 'no-store' })
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -48,24 +51,24 @@
       .then(function (data) {
         var items = (data && data.items) || [];
         if (!items.length) {
-          container.innerHTML = '<div style="padding:40px;text-align:center;color:#999;">暂无排行数据</div>';
+          fallbackBox.innerHTML = '<div style="padding:40px;text-align:center;color:#999;">暂无排行数据</div>';
           return;
         }
         items.sort(function (a, b) {
           if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
           return b.totalDx - a.totalDx;
         });
-        renderRank(items, data.updatedAt);
+        fallbackBox.innerHTML = buildRankHTML(items, data.updatedAt);
       })
       .catch(function (e) {
-        container.innerHTML =
+        fallbackBox.innerHTML =
           '<div style="padding:40px;text-align:center;color:#c33;">' +
             '排行榜加载失败：' + e.message +
           '</div>';
       });
   }
 
-  function renderRank(items, updatedAt) {
+  function buildRankHTML(items, updatedAt) {
     var rows = items.map(function (it, i) {
       var color = i === 0 ? '#f5a623' : i === 1 ? '#9b9b9b' : i === 2 ? '#cd7f32' : '#888';
       return ''
@@ -77,7 +80,7 @@
         + '</tr>';
     }).join('');
 
-    container.innerHTML = ''
+    return ''
       + '<div style="font-family:\'Noto Sans SC\',\'Microsoft YaHei\',sans-serif;padding:20px 16px;max-width:720px;margin:0 auto;">'
       +   '<div style="margin-bottom:16px;">'
       +     '<div style="font-size:11px;letter-spacing:2px;font-weight:700;color:#bbb;margin-bottom:6px;">LIVE RANKING</div>'
